@@ -1,0 +1,10 @@
+name: keystroke
+channels:
+  - pytorch
+  - anaconda
+  - conda-forge
+dependencies:
+  - python
+  - pip
+  - pip:
+      - keyboard
