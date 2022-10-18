@@ -51,7 +51,7 @@ def record(sentence: str = "", sample_number: str = "") -> Tuple[List[Tuple[str,
     header: str = f"({sample_number})Type something (press Enter to finish)" if sentence == "" else f"({sample_number})Type '{sentence}' (press Enter to finish)"
     s = ""  # this variable will contain what the user writes
     # this variable tells if we interpret charachters as lower or upper case
-    upper: bool = False
+    caps_lock: bool = False
     # pending keys waiting to be released
     pending: List[Tuple[keyboard.KeyCode, float]] = list()
     # final output list
@@ -96,12 +96,15 @@ def record(sentence: str = "", sample_number: str = "") -> Tuple[List[Tuple[str,
                     elif event.key == keyboard.Key.space:  # with the space, add a space
                         s = s + " "
                     else:  # with a normal character, simply add it
-                        s = s + str(output[-1][0])[1:-1]
+                        char = str(output[-1][0])[1:-1]
+                        s = s + (char.lower() if char.islower()
+                                 != caps_lock else char.upper())
                     print(header)
                     print(s+"|")
             # the user pressed a non write character that changes the upper to lowercase and viceversa
-            elif event.key != keyboard.Key.caps_lock or not isinstance(event, keyboard.Events.Release):
-                upper = not(upper)
+            # event.key != keyboard.Key.caps_lock or not isinstance(event, keyboard.Events.Release):
+            elif event.key == keyboard.Key.caps_lock and isinstance(event, keyboard.Events.Press):
+                caps_lock = not(caps_lock)
 
     flush_stdin()
 
