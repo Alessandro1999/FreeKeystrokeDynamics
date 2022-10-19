@@ -7,3 +7,17 @@ ROOT_PATH: Path = Path(__file__).parent.parent
 
 # append the folder to the path
 sys.path.append(str(ROOT_PATH))
+
+# unknown subject
+UNK_SUB = "<UNK>"
+
+# unknown key
+UNK_KEY = "<unk>"
+# pad key
+PAD_KEY = "<pad>"
+
+# mapping from a key to a one-hot value
+key_map: Dict[str, int] = dict()
+
+# mapping from a subject name to a one-hot value
+subject_map: Dict[str, int] = dict()

@@ -7,6 +7,10 @@ dependencies:
   - python
   - pip
   - pandas
+  - cudatoolkit
+  - pytorch
   - pip:
-      - keyboard
       - pynput
+      - tqdm
+
+  

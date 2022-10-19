@@ -2,15 +2,11 @@ from typing import *
 import os
 import sys
 import time
-import re
 from datetime import datetime
 import random
 from pathlib import Path
 import pandas as pd
 from pynput import keyboard
-
-# regex to split the string of the records in the list of events
-regex: str = r"\(((\<\S+\: ((\' \')|\<\d+\>)\>)|(\'\w\'))\, \d+\.\d+\, \d+\.\d+\)"
 
 italian_sentences: List[str] = ["Che tempi brevi zio, quando solfeggi.",
                                 "Pranzo d'acqua fa volti sghembi.",
@@ -101,8 +97,7 @@ def record(sentence: str = "", sample_number: str = "") -> Tuple[List[Tuple[str,
                                  != caps_lock else char.upper())
                     print(header)
                     print(s+"|")
-            # the user pressed a non write character that changes the upper to lowercase and viceversa
-            # event.key != keyboard.Key.caps_lock or not isinstance(event, keyboard.Events.Release):
+            # the user pressed the caps lock that changes the upper to lowercase and viceversa
             elif event.key == keyboard.Key.caps_lock and isinstance(event, keyboard.Events.Press):
                 caps_lock = not(caps_lock)
 
@@ -171,17 +166,3 @@ def take_sample(n: int = 1, free: bool = False, df_path: Path = None) -> pd.Data
     finally:  # finally, save the dataframe to df_path and return it
         df.to_csv(df_path, index=False)
         return df
-
-
-def string_to_seq(input: str) -> List[Tuple[str, float]]:
-    '''
-    Given an input string representing the recordings of a sentence,
-    this function returns it as a list of key,Dwell time for each key pressed
-    '''
-    matches = re.finditer(regex, input, re.MULTILINE)
-    out = []
-    for match in matches:
-        key, press_time, release_time = match.group()[1:-1].split(",")
-        out.append(
-            (key[1:-1], round(float(release_time) - float(press_time), 2)))
-    return out
