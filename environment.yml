@@ -11,6 +11,8 @@ dependencies:
   - pytorch
   - pip:
       - pynput
+      - pytorch-lightning
+      - wandb
       - tqdm
 
   

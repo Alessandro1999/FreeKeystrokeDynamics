@@ -21,3 +21,6 @@ key_map: Dict[str, int] = dict()
 
 # mapping from a subject name to a one-hot value
 subject_map: Dict[str, int] = dict()
+
+# non-unknown subject
+known_subject: Set[str] = {"Alessandro", "Palo", "Iolanda", "Helena"}

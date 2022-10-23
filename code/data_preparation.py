@@ -6,6 +6,7 @@ import pandas as pd
 import torch
 
 import config
+import old_dataset_conversion as old
 import dataset
 
 # regex to split the string of the records in the list of events
@@ -66,24 +67,28 @@ def compute_metrics(sample: List[Tuple[str, float, float]]) -> Tuple[List[Tuple[
     return output, keys
 
 
-def pd_to_lists(df: pd.DataFrame) -> Tuple[List[List[Tuple[str, float, float]]], Set[str]]:
-    '''
-    Given a pandas dataframe, it returns the timing metrics along with the set of all keys pressed
-    '''
-    out = list()
-    all_keys = set()
+def pd_conversion(df: pd.DataFrame) -> Tuple[pd.DataFrame, Set[str]]:
+    columns = ["Subject", "Date", "Sentence", "Timings"]
+    data = list()
+    keys = set()
     for i in range(df.shape[0]):
-        metrics, keys = compute_metrics(string_to_seq(df.Timings.iloc[i]))
-        all_keys = all_keys.union(keys)
-        out.append(metrics)
-    return out, all_keys
+        # subject,date,sentence
+        s = df.iloc[i][0]
+        row = [(s if s in config.known_subject else config.UNK_SUB),
+               df.iloc[i][1], df.iloc[i][2]]
+        timings, keys_used = compute_metrics(string_to_seq(df.iloc[i][3]))
+        row.append(timings)
+        keys = keys.union(keys_used)
+        data.append(row)
+
+    return pd.DataFrame(data=data, columns=columns), keys
 
 
-def pd_to_dataset(df: pd.DataFrame, compute_vocab: bool = True) -> dataset.KeystrokeDataset:
-    data, keys = pd_to_lists(df)
-
+def pd_to_dataset(df: pd.DataFrame, keys: Set[str], compute_vocab: bool = True) -> dataset.KeystrokeDataset:
+    data = list(df.Timings)
     if compute_vocab:
         subjects: Set[str] = set(df.Subject)
+        subjects.discard(config.UNK_SUB)
         config.subject_map: Dict[str, int] = {
             s: i+1 for i, s in enumerate(sorted(subjects))}
         config.subject_map[config.UNK_SUB] = 0
@@ -119,12 +124,32 @@ def pd_to_dataset(df: pd.DataFrame, compute_vocab: bool = True) -> dataset.Keyst
     return dataset.KeystrokeDataset(ground_truth, keys_tensor, time_tensor, lengths)
 
 
-def get_dataframes(path: Path) -> pd.DataFrame:
+def get_dataframes(path: Path) -> Tuple[pd.DataFrame, Set[str]]:
     dfs: List[pd.DataFrame] = list()
+    keys: Set[str] = set()
     for file in os.listdir(path):
         tdf: pd.DataFrame = pd.read_csv(path.joinpath(file))
-        dfs.append(tdf)
+        if "[OLD]" in file:
+            cdf, keys_used = old.pd_conversion(tdf)
+        else:
+            cdf, keys_used = pd_conversion(tdf)
+        dfs.append(cdf)
+        keys = keys.union(keys_used)
 
     if len(dfs) == 0:
         return None
-    return pd.concat(dfs)
+    return pd.concat(dfs), keys
+
+
+# TODO unused
+def pd_to_lists(df: pd.DataFrame) -> Tuple[List[List[Tuple[str, float, float]]], Set[str]]:
+    '''
+    Given a pandas dataframe, it returns the timing metrics along with the set of all keys pressed
+    '''
+    out = list()
+    all_keys = set()
+    for i in range(df.shape[0]):
+        metrics, keys = compute_metrics(string_to_seq(df.Timings.iloc[i]))
+        all_keys = all_keys.union(keys)
+        out.append(metrics)
+    return out, all_keys

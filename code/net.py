@@ -1,9 +1,11 @@
-from turtle import forward
-import config
+from typing import *
 import torch
+import pytorch_lightning as pl
+
+import config
 
 
-class KeystrokeLSTM(torch.nn.Module):
+class KeystrokeLSTM(pl.LightningModule):
     def __init__(self, embedding_dim: int, hidden_size: int, lstm_layers: int) -> None:
         super().__init__()
 
@@ -23,12 +25,25 @@ class KeystrokeLSTM(torch.nn.Module):
         self.softmax = torch.nn.Softmax(dim=-1)
         self.loss = torch.nn.CrossEntropyLoss()
 
-    def forward(self, keys: torch.tensor, timings: torch.tensor, lenghts: torch.tensor, y: torch.tensor = None):
+        # logging stuff
+        self.train_correct: int = 0
+        self.val_correct: int = 0
+        self.test_correct: int = 0
+
+        self.train_total: int = 0
+        self.val_total: int = 0
+        self.test_total: int = 0
+
+        self.save_hyperparameters()
+
+    def forward(self, keys: torch.Tensor, timings: torch.Tensor, lenghts: torch.Tensor, y: torch.Tensor = None):
+        batch_size = lenghts.shape[0]
+
         emb = self.key_emb(keys)
 
         x = torch.concat((emb, timings), dim=-1)
 
-        x = self.lstm(x)[0][:, -1, :]
+        x = self.lstm(x)[0][torch.arange(batch_size), (lenghts-1).long(), :]
 
         logits = self.linear(x)
 
@@ -39,3 +54,56 @@ class KeystrokeLSTM(torch.nn.Module):
             out["loss"] = self.loss(logits, y.long())
 
         return out
+
+    def step(self, batch) -> Tuple[torch.Tensor, int, int]:
+        y, keys, timings, lenghts = batch
+        out: Dict[str, torch.tensor] = self(keys, timings, lenghts, y)
+        loss = out["loss"]
+        correct = ((out["probabilities"].argmax(dim=1) == y)).sum().item()
+        total = (y != -1).sum().item()
+        return loss, correct, total
+
+    def training_step(self, train_batch, batch_idx) -> torch.Tensor:
+        loss, correct, total = self.step(train_batch)
+        self.train_correct += correct
+        self.train_total += total
+        return loss
+
+    def validation_step(self, train_batch, batch_idx) -> torch.Tensor:
+        loss, correct, total = self.step(train_batch)
+        self.val_correct += correct
+        self.val_total += total
+        return loss
+
+    def test_step(self, train_batch, batch_idx) -> torch.Tensor:
+        loss, correct, total = self.step(train_batch)
+        self.test_correct += correct
+        self.test_total += total
+        return loss
+
+    def log_metrics(self, correct, total, loss, type: str):
+        accuracy: float = correct / total
+        self.log(f'{type}_acc', accuracy)
+        self.log(f'{type}_loss', loss)
+        self.log(f'epoch', float(self.current_epoch))
+
+    def training_epoch_end(self, outputs) -> None:
+        loss = sum([x['loss'] for x in outputs]) / len(outputs)
+        self.log_metrics(self.train_correct, self.train_total, loss, 'train')
+        self.train_correct, self.train_total = 0, 0
+        return super().training_epoch_end(outputs)
+
+    def validation_epoch_end(self, outputs) -> None:
+        loss = sum(outputs) / len(outputs)
+        self.log_metrics(self.val_correct, self.val_total, loss, 'val')
+        self.val_correct, self.val_total = 0, 0
+        return super().validation_epoch_end(outputs)
+
+    def test_epoch_end(self, outputs) -> None:
+        loss = sum(outputs) / len(outputs)
+        self.log_metrics(self.test_correct, self.test_total, loss, 'test')
+        self.test_correct, self.test_total = 0, 0
+        return super().test_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        return torch.optim.SGD(self.parameters(), lr=0.001)
