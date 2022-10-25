@@ -1,2 +1,5 @@
 code/__pycache__
 data/
+lightning_logs/
+wandb/
+checkpoints/

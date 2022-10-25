@@ -20,7 +20,7 @@ def row_conversion(row: List[float]) -> List[Tuple[str, float, float]]:
     return new_row
 
 
-def pd_conversion(df: pd.DataFrame) -> Tuple[List[List[Tuple[str, float, float]]], Set[str]]:
+def pd_conversion(df: pd.DataFrame) -> List[List[Tuple[str, float, float]]]:
     columns = ["Subject", "Date", "Sentence", "Timings"]
     sentence = "password4592,i4"
     data = list()
@@ -35,4 +35,4 @@ def pd_conversion(df: pd.DataFrame) -> Tuple[List[List[Tuple[str, float, float]]
         # data.append(row_conversion(list(df.iloc[i])))
 
     new_df = pd.DataFrame(data=data, columns=columns)
-    return new_df, set("password4592,i4")
+    return new_df

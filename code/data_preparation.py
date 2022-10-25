@@ -4,6 +4,7 @@ import re
 import os
 import pandas as pd
 import torch
+import random
 
 import config
 import old_dataset_conversion as old
@@ -28,7 +29,7 @@ def string_to_seq(input: str) -> List[Tuple[str, float, float]]:
     return out
 
 
-def compute_metrics(sample: List[Tuple[str, float, float]]) -> Tuple[List[Tuple[float, float]], Set[str]]:
+def compute_metrics(sample: List[Tuple[str, float, float]]) -> List[Tuple[str, float, float]]:
     '''
     Given the timings of a recorded sentence, it computes for each key:
     - the dwell time, the time between a key press and its release
@@ -39,15 +40,12 @@ def compute_metrics(sample: List[Tuple[str, float, float]]) -> Tuple[List[Tuple[
     - pressing interval, time between pressing of the previous key and pressing of the current one (NOT USED since it is prev dwell time + waiting time)
     - double typing time, time between the pressing of the previous key and the releasing of the current one (NOT USED since it is dwell time + prev dwell time + waiting time)
 
-    Also, it returns the set of the keys pressed by the user ins the recorded sentence
     '''
     output = list()
-    keys = set()
     for i, (key, press_time, release_time) in enumerate(sample):
         key = key.lower()
         if "key" in key:
             key = key.split(":")[0]
-        keys.add(key)
         dwell_time = round(release_time - press_time, 5)
         if i == 0:
             waiting_time = 0
@@ -64,81 +62,86 @@ def compute_metrics(sample: List[Tuple[str, float, float]]) -> Tuple[List[Tuple[
                        dwell_time,
                        waiting_time,))
 
-    return output, keys
+    return output
 
 
-def pd_conversion(df: pd.DataFrame) -> Tuple[pd.DataFrame, Set[str]]:
+def pd_conversion(df: pd.DataFrame) -> pd.DataFrame:
     columns = ["Subject", "Date", "Sentence", "Timings"]
     data = list()
-    keys = set()
     for i in range(df.shape[0]):
         # subject,date,sentence
         s = df.iloc[i][0]
         row = [(s if s in config.known_subject else config.UNK_SUB),
                df.iloc[i][1], df.iloc[i][2]]
-        timings, keys_used = compute_metrics(string_to_seq(df.iloc[i][3]))
+        timings = compute_metrics(string_to_seq(df.iloc[i][3]))
         row.append(timings)
-        keys = keys.union(keys_used)
         data.append(row)
 
-    return pd.DataFrame(data=data, columns=columns), keys
+    return pd.DataFrame(data=data, columns=columns)
 
 
-def pd_to_dataset(df: pd.DataFrame, keys: Set[str], compute_vocab: bool = True) -> dataset.KeystrokeDataset:
-    data = list(df.Timings)
-    if compute_vocab:
-        subjects: Set[str] = set(df.Subject)
-        subjects.discard(config.UNK_SUB)
-        config.subject_map: Dict[str, int] = {
-            s: i+1 for i, s in enumerate(sorted(subjects))}
-        config.subject_map[config.UNK_SUB] = 0
-
-        config.key_map: Dict[str, int] = {
-            k: i+2 for i, k in enumerate(sorted(keys))}
-        config.key_map[config.PAD_KEY] = 0
-        config.key_map[config.UNK_KEY] = 1
-
-    ground_truth = torch.zeros(len(data))
-    lengths = torch.zeros(len(data))
-    keys_list = list()
-    time_list = list()
-    subjects = list(df.Subject)
-    for i in range(len(data)):
-        ground_truth[i] = config.subject_map[subjects[i]]
-        lengths[i] = len(data[i])
-        kt = torch.zeros(len(data[i]), dtype=torch.long)
-        t = torch.zeros(len(data[i]), 2)
-        for j, (k, press, release) in enumerate(data[i]):
-            kt[j] = config.key_map[k]
-            t[j][0] = press
-            t[j][1] = release
-        keys_list.append(kt)
-        time_list.append(t)
-
-    keys_tensor = torch.nn.utils.rnn.pad_sequence(
-        keys_list, batch_first=True, padding_value=config.key_map[config.PAD_KEY])
-
-    time_tensor = torch.nn.utils.rnn.pad_sequence(
-        time_list, batch_first=True, padding_value=0.0)
-
-    return dataset.KeystrokeDataset(ground_truth, keys_tensor, time_tensor, lengths)
-
-
-def get_dataframes(path: Path) -> Tuple[pd.DataFrame, Set[str]]:
+def get_dataframes(path: Path) -> pd.DataFrame:
+    '''
+    Given a path, all the files in the path (that shuold be .csv)
+    are transformed into a dataframe and concatenated (this means that all these dataframes
+    should have the same columns)
+    '''
     dfs: List[pd.DataFrame] = list()
-    keys: Set[str] = set()
-    for file in os.listdir(path):
+    for file in os.listdir(path):  # for each file in the path
+        # read the dataframe
         tdf: pd.DataFrame = pd.read_csv(path.joinpath(file))
+        # if the file was an old dataset (different columns)
         if "[OLD]" in file:
-            cdf, keys_used = old.pd_conversion(tdf)
+            # convert the file to the new format
+            cdf = old.pd_conversion(tdf)
         else:
-            cdf, keys_used = pd_conversion(tdf)
+            # if it is not old, do the standard conversion
+            cdf = pd_conversion(tdf)
         dfs.append(cdf)
-        keys = keys.union(keys_used)
 
     if len(dfs) == 0:
         return None
-    return pd.concat(dfs), keys
+    # return the dataframes concatenated
+    return pd.concat(dfs)
+
+
+def split_df(df: pd.DataFrame, perc: float) -> Tuple[pd.DataFrame]:
+    '''
+    Given a pandas dataframe and a percentage, the dataframe is split
+    in two new dataframes where the first one has the given percentage
+    of rows and the second 1-percentage; the intersection between them is
+    empty and they are splitted according to the Date in which the samples are
+    taken
+    '''
+    dates: Set[str] = sorted(set(df.Date))  # all the dates in the dataframe
+
+    # the number of dates to assign to the first dataframe
+    df1_num = int(len(dates)*perc)
+    # pick randomly df1_num of dates
+    df1_dates: Set[str] = random.sample(dates, k=df1_num)
+
+    # the boolean series for the rows of the first dataframe
+    df1_series: pd.Series = df.Date.isin(df1_dates)
+
+    # the first dataframe picks the rows that have the dates selected
+    df1: pd.DataFrame = df[df1_series]
+    # the second dataframe picks all the others (~ is a logical pointwise not)
+    df2: pd.DataFrame = df[~df1_series]
+    return df1, df2
+
+
+def get_keys(df: pd.DataFrame) -> Set[str]:
+    '''
+    Given a pandas dataframe, it returns the set of all the keystroke pressed
+    in all the samples of the dataframe
+    '''
+    # each row contains its own set of keystroke pressed
+    s: pd.Series = df.Timings.apply(
+        lambda event: {key for key, dt, wt in event})
+    keys = set()
+    # apply the set union of each row
+    s.aggregate(lambda x: keys.update(x))
+    return keys
 
 
 # TODO unused
