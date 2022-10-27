@@ -1,6 +1,9 @@
+from cProfile import label
 from typing import *
 import torch
 import pytorch_lightning as pl
+import matplotlib.pyplot as plt
+import wandb
 
 import config
 
@@ -29,16 +32,17 @@ class KeystrokeLSTM(pl.LightningModule):
         self.softmax = torch.nn.Softmax(dim=-1)
         self.loss = torch.nn.CrossEntropyLoss()
 
-        # logging stuff
-        self.train_correct: int = 0
-        self.val_correct: int = 0
-        self.test_correct: int = 0
-
-        self.train_total: int = 0
-        self.val_total: int = 0
-        self.test_total: int = 0
-
+        # boolean flag that just tells us if we have never tested the model yet
         self.first_test: bool = True
+
+        # the thresholds for which we will compute FAR and FRR
+        self.thresholds = torch.arange(0, 1, 0.001, device=self.device)
+        self.false_acceptances = torch.zeros_like(
+            self.thresholds, device=self.device)
+        self.false_rejections = torch.zeros_like(
+            self.thresholds, device=self.device)
+        self.false_claims: int = 0
+        self.genuine_claims: int = 0
 
         self.save_hyperparameters()
 
@@ -62,62 +66,105 @@ class KeystrokeLSTM(pl.LightningModule):
 
         return out
 
-    def step(self, batch) -> Tuple[torch.Tensor, int, int]:
+    def step(self, batch) -> torch.Tensor:
         y, keys, timings, lenghts = batch
         out: Dict[str, torch.tensor] = self(keys, timings, lenghts, y)
         loss = out["loss"]
-        correct = ((out["probabilities"].argmax(dim=1) == y)).sum().item()
-        total = (y != -1).sum().item()
-        return loss, correct, total
+        return loss
 
     def training_step(self, train_batch, batch_idx) -> torch.Tensor:
-        loss, correct, total = self.step(train_batch)
-        self.train_correct += correct
-        self.train_total += total
-        return loss
+        return self.step(train_batch)
 
-    def validation_step(self, train_batch, batch_idx) -> torch.Tensor:
-        loss, correct, total = self.step(train_batch)
-        self.val_correct += correct
-        self.val_total += total
-        return loss
+    def validation_step(self, val_batch, batch_idx) -> torch.Tensor:
+        return self.step(val_batch)
 
-    def test_step(self, train_batch, batch_idx) -> torch.Tensor:
-        loss, correct, total = self.step(train_batch)
-        self.test_correct += correct
-        self.test_total += total
-        return loss
+    def test_step(self, test_batch, batch_idx) -> torch.Tensor:
+        y, keys, timings, lenghts = test_batch
+        batch_size: int = y.shape[0]
+        # output probabilities of the model
+        out: Dict[str, torch.tensor] = self(keys, timings, lenghts, y)
+        # the boolean mask for the probes belonging to unknown users
+        unk_y: torch.Tensor = (y == config.subject_map[config.UNK_SUB])
+        # the number of non enrolled users in this batch
+        non_enrolled_users: int = unk_y.sum()
+        # the number of enrolled users in this batch
+        enrolled_users: int = (batch_size - non_enrolled_users)
+        # the number of all enrolled users
+        all_users_num: int = len(config.known_subject)
+        # every enrolled user can be a genuine claim
+        self.genuine_claims = self.genuine_claims + enrolled_users
+        # every enrolled user can have n-1 false claims, every non enrolled can have n insted
+        # n is the number of enrolled subjects
+        self.false_claims = self.false_claims +\
+            (enrolled_users * (all_users_num-1)) +\
+            (non_enrolled_users * all_users_num)
 
-    def log_metrics(self, correct, total, loss, type: str):
-        accuracy: float = correct / total
-        self.log(f'{type}_acc', accuracy)
+        if self.thresholds.device != self.device:
+            self.thresholds = self.thresholds.to(self.device)
+        if self.false_acceptances.device != self.device:
+            self.false_acceptances = self.false_acceptances.to(self.device)
+        if self.false_rejections != self.device:
+            self.false_rejections = self.false_rejections.to(self.device)
+
+        genuin_claims = (out["probabilities"]
+                         # take only probability for the real identity
+                         [torch.arange(batch_size), y.long()]
+                         # take only enrolled subjects
+                         [torch.logical_not(unk_y)]).to(self.device)
+
+        unknown_probs = out["probabilities"][unk_y,
+                                             config.subject_map[config.UNK_SUB]]
+
+        # for every threshold
+        for t in range(len(self.thresholds)):
+            # this iteration's threshold
+            threshold: float = self.thresholds[t].item()
+
+            self.false_rejections[t] += (genuin_claims < threshold).sum()
+
+            self.false_acceptances[t] += (out["probabilities"] >= threshold).sum() -\
+                (genuin_claims >= threshold).sum() -\
+                (unknown_probs >= threshold).sum()
+        return out["loss"]
+
+    def log_metrics(self, loss: float, type: str):
         self.log(f'{type}_loss', loss)
         self.log(f'epoch', float(self.current_epoch))
 
     def training_epoch_end(self, outputs) -> None:
         loss = sum([x["loss"] for x in outputs]) / len(outputs)
-        self.log_metrics(self.train_correct, self.train_total,
-                         loss.item(), 'train')
-        self.train_correct, self.train_total = 0, 0
+        self.log_metrics(loss.item(), 'train')
         return super().training_epoch_end(outputs)
 
     def validation_epoch_end(self, outputs) -> None:
         loss = sum(outputs) / len(outputs)
-        self.log_metrics(self.val_correct, self.val_total, loss.item(), 'val')
-        self.val_correct, self.val_total = 0, 0
+        self.log_metrics(loss.item(), 'val')
         return super().validation_epoch_end(outputs)
 
     def test_epoch_end(self, outputs) -> None:
         loss = sum(outputs) / len(outputs)
-        self.log_metrics(self.test_correct, self.test_total,
-                         loss.item(), 'test_b' if self.first_test else 'test_a')
+
+        fars: torch.Tensor = self.false_acceptances / self.false_claims
+        frrs: torch.Tensor = self.false_rejections / self.genuine_claims
+        self.false_acceptances = torch.zeros_like(self.false_acceptances)
+        self.false_rejections = torch.zeros_like(self.false_acceptances)
+        self.false_claims = 0
+        self.genuine_claims = 0
+
+        plt.plot(self.thresholds.cpu().numpy(),
+                 fars.cpu().numpy(), label="frr")
+        plt.plot(self.thresholds.cpu().numpy(),
+                 frrs.cpu().numpy(), label="far")
+        plt.xlabel("Threshold")
+        plt.ylabel("FAR/FRR")
+        wandb.log({"FAR/FRR": plt})
+
+        self.log_metrics(loss.item(),
+                         'test_b' if self.first_test else 'test_a')
+
         if self.first_test:
             self.first_test = False
-        self.test_correct, self.test_total = 0, 0
         return super().test_epoch_end(outputs)
 
     def configure_optimizers(self):
         return torch.optim.SGD(self.parameters(), lr=0.001)
-
-    def predict(self,):
-        pass  # TODO

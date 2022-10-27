@@ -23,7 +23,10 @@ key_map: Dict[str, int] = dict()
 subject_map: Dict[str, int] = dict()
 
 # non-unknown subject
-known_subject: Set[str] = {"Alessandro", "Palo", "Iolanda", "Helena"}
+known_subject: Set[str] = {"Alessandro", "Palo", "Iolanda", "Paglialunga",
+                           "Helena", "Leonardo", "Bianca", "Roberto", "RobertoM", "Umberto", "AlessandroPecchini"}
+#known_subject: Set[str] = {"Alessandro", "Palo", "Iolanda", "Helena"}
+
 
 # the seed for random stuff
 seed: int = 17

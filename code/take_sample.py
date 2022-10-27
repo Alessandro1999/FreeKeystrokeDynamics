@@ -99,7 +99,7 @@ def record(sentence: str = "", sample_number: str = "") -> Tuple[List[Tuple[str,
                     print(s+"|")
             # the user pressed the caps lock that changes the upper to lowercase and viceversa
             elif event.key == keyboard.Key.caps_lock and isinstance(event, keyboard.Events.Press):
-                caps_lock = not(caps_lock)
+                caps_lock = not (caps_lock)
 
     flush_stdin()
 
@@ -124,7 +124,7 @@ def _take_sample(free: bool = False, sample_number: str = "") -> Tuple[str, List
     return datetime.today().strftime("%d-%m-%Y"), timings, s
 
 
-def take_sample(n: int = 1, free: bool = False, df_path: Path = None) -> pd.DataFrame:
+def take_sample(n: int = 1, free: bool = False, df_path: Path = None, save_to_file: bool = True) -> pd.DataFrame:
     '''
     This function aquires n samples (if free is True, from free text). If df_path is specified,
     the samples will be added to the pandas dataframe found in df_path
@@ -157,12 +157,14 @@ def take_sample(n: int = 1, free: bool = False, df_path: Path = None) -> pd.Data
     if df_path is None:
         df_path = f"{name}.csv"
 
-    try:  # try to load the pandas dataframe in df_path
-        old_df = pd.read_csv(df_path)
-        # if you can, concatenate it with the new data
-        df = pd.concat([old_df, df])
-    except:  # if you can't, the dataframe will just be the new data
-        pass
-    finally:  # finally, save the dataframe to df_path and return it
-        df.to_csv(df_path, index=False)
-        return df
+    if save_to_file:
+        try:  # try to load the pandas dataframe in df_path
+            old_df = pd.read_csv(df_path)
+            # if you can, concatenate it with the new data
+            df = pd.concat([old_df, df])
+        except:  # if you can't, the dataframe will just be the new data
+            pass
+        finally:  # finally, save the dataframe to df_path and return it
+            df.to_csv(df_path, index=False)
+
+    return df

@@ -66,6 +66,10 @@ def compute_metrics(sample: List[Tuple[str, float, float]]) -> List[Tuple[str, f
 
 
 def pd_conversion(df: pd.DataFrame) -> pd.DataFrame:
+    '''
+    Given a dataframe, this function converts it into another one
+    that has the timing metrics instead of the relative time of the events
+    '''
     columns = ["Subject", "Date", "Sentence", "Timings"]
     data = list()
     for i in range(df.shape[0]):
@@ -73,7 +77,12 @@ def pd_conversion(df: pd.DataFrame) -> pd.DataFrame:
         s = df.iloc[i][0]
         row = [(s if s in config.known_subject else config.UNK_SUB),
                df.iloc[i][1], df.iloc[i][2]]
-        timings = compute_metrics(string_to_seq(df.iloc[i][3]))
+        timings_row = df.iloc[i][3]
+        if type(timings_row) == list:
+            timings_row = [(str(k), p, r) for k, p, r in timings_row]
+
+        timings = compute_metrics(timings_row if type(timings_row) == list
+                                  else string_to_seq(df.iloc[i][3]))
         row.append(timings)
         data.append(row)
 
@@ -109,9 +118,9 @@ def split_df(df: pd.DataFrame, perc: float) -> Tuple[pd.DataFrame]:
     '''
     Given a pandas dataframe and a percentage, the dataframe is split
     in two new dataframes where the first one has the given percentage
-    of rows and the second 1-percentage; the intersection between them is
+    of dates and the second 1-percentage; the intersection between them is
     empty and they are splitted according to the Date in which the samples are
-    taken
+    taken.
     '''
     dates: Set[str] = sorted(set(df.Date))  # all the dates in the dataframe
 
@@ -128,6 +137,28 @@ def split_df(df: pd.DataFrame, perc: float) -> Tuple[pd.DataFrame]:
     # the second dataframe picks all the others (~ is a logical pointwise not)
     df2: pd.DataFrame = df[~df1_series]
     return df1, df2
+
+
+def split_df_subjects(df: pd.DataFrame, perc: float):
+    '''
+    Given a pandas dataframe, for each subject, perc% of the dates
+    in which the samples are taken will be assigned to a dataframe while (1-perc)%
+    to a second one. So the output is a tuple of dataframe with no intersection and
+    that concatenated gives back the input dataframe.
+    '''
+    # first, we compute the split for the unknown subjects
+    out_df1, out_df2 = split_df(
+        df[~df.Subject.isin(config.known_subject)], perc)
+
+    # for every subject we want to classify
+    for subject in sorted(config.known_subject):
+        # compute the split for the subject
+        temp_dfs: Tuple[pd.DataFrame] = split_df(
+            df[df.Subject == subject], perc)
+        # concatenated the dataframes
+        out_df1 = pd.concat([out_df1, temp_dfs[0]])
+        out_df2 = pd.concat([out_df2, temp_dfs[1]])
+    return out_df1, out_df2
 
 
 def get_keys(df: pd.DataFrame) -> Set[str]:

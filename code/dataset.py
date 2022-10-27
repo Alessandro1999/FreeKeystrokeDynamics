@@ -62,8 +62,10 @@ class KeystrokeDataModule(pl.LightningDataModule):
     def __init__(self, df: pd.DataFrame, test_perc: float, val_perc: float, batch_size: int = 32):
         super().__init__()
 
-        train_df, test_df = data_preparation.split_df(df, 1-test_perc)
-        train_df, val_df = data_preparation.split_df(train_df, 1-val_perc)
+        train_df, test_df = data_preparation.split_df_subjects(df,
+                                                               1-test_perc)
+        train_df, val_df = data_preparation.split_df_subjects(train_df,
+                                                              1-val_perc)
 
         keys: Set[str] = data_preparation.get_keys(train_df)
 
