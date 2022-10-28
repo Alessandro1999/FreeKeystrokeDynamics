@@ -86,18 +86,17 @@ class KeystrokeLSTM(pl.LightningModule):
         # the boolean mask for the probes belonging to unknown users
         unk_y: torch.Tensor = (y == config.subject_map[config.UNK_SUB])
         # the number of non enrolled users in this batch
-        non_enrolled_users: int = unk_y.sum()
+        non_enrolled_users: int = unk_y.sum().item()
         # the number of enrolled users in this batch
         enrolled_users: int = (batch_size - non_enrolled_users)
         # the number of all enrolled users
         all_users_num: int = len(config.known_subject)
         # every enrolled user can be a genuine claim
-        self.genuine_claims = self.genuine_claims + enrolled_users
+        self.genuine_claims += enrolled_users
         # every enrolled user can have n-1 false claims, every non enrolled can have n insted
         # n is the number of enrolled subjects
-        self.false_claims = self.false_claims +\
-            (enrolled_users * (all_users_num-1)) +\
-            (non_enrolled_users * all_users_num)
+        self.false_claims += (enrolled_users * (all_users_num-1)) +\
+                             (non_enrolled_users * all_users_num)
 
         if self.thresholds.device != self.device:
             self.thresholds = self.thresholds.to(self.device)
@@ -112,8 +111,11 @@ class KeystrokeLSTM(pl.LightningModule):
                          # take only enrolled subjects
                          [torch.logical_not(unk_y)]).to(self.device)
 
-        unknown_probs = out["probabilities"][unk_y,
-                                             config.subject_map[config.UNK_SUB]]
+        false_claims = out["probabilities"] + 0  # make a copy
+        # do not consider genuine claims by setting them to -1
+        false_claims[torch.arange(batch_size), y.long()] = -1
+        # you cannot claim the identity of the unknown subject
+        false_claims[:, config.subject_map[config.UNK_SUB]] = -1
 
         # for every threshold
         for t in range(len(self.thresholds)):
@@ -122,9 +124,8 @@ class KeystrokeLSTM(pl.LightningModule):
 
             self.false_rejections[t] += (genuin_claims < threshold).sum()
 
-            self.false_acceptances[t] += (out["probabilities"] >= threshold).sum() -\
-                (genuin_claims >= threshold).sum() -\
-                (unknown_probs >= threshold).sum()
+            self.false_acceptances[t] += (false_claims >= threshold).sum()
+
         return out["loss"]
 
     def log_metrics(self, loss: float, type: str):
@@ -144,27 +145,37 @@ class KeystrokeLSTM(pl.LightningModule):
     def test_epoch_end(self, outputs) -> None:
         loss = sum(outputs) / len(outputs)
 
+        log_detail: str = 'before training' if self.first_test else 'after training'
         fars: torch.Tensor = self.false_acceptances / self.false_claims
         frrs: torch.Tensor = self.false_rejections / self.genuine_claims
+
+        argmin_eer: int = int(torch.argmin(torch.abs(fars - frrs)).item())
+        approx_eer: float = ((fars[argmin_eer] + frrs[argmin_eer])/2).item()
+        eer_t: float = self.thresholds[argmin_eer].item()
+
         self.false_acceptances = torch.zeros_like(self.false_acceptances)
         self.false_rejections = torch.zeros_like(self.false_acceptances)
         self.false_claims = 0
         self.genuine_claims = 0
 
         plt.plot(self.thresholds.cpu().numpy(),
-                 fars.cpu().numpy(), label="frr")
+                 fars.cpu().numpy(), label="FRR")
         plt.plot(self.thresholds.cpu().numpy(),
-                 frrs.cpu().numpy(), label="far")
+                 frrs.cpu().numpy(), label="FAR")
+        plt.plot(eer_t, approx_eer, 'ko', label="EER")
         plt.xlabel("Threshold")
         plt.ylabel("FAR/FRR")
-        wandb.log({"FAR/FRR": plt})
+        plt.legend()
+        wandb.log({f"EER threshold {log_detail}": eer_t})
+        wandb.log({f"EER {log_detail}": approx_eer})
+        wandb.log(
+            {f"FAR/FRR {log_detail}": plt})
 
-        self.log_metrics(loss.item(),
-                         'test_b' if self.first_test else 'test_a')
+        self.log_metrics(loss.item(), f'test {log_detail}')
 
         if self.first_test:
             self.first_test = False
         return super().test_epoch_end(outputs)
 
     def configure_optimizers(self):
-        return torch.optim.SGD(self.parameters(), lr=0.001)
+        return torch.optim.Adam(self.parameters(), lr=0.001)

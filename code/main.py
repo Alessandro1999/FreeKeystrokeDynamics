@@ -61,13 +61,15 @@ def train(epochs: int,
                                              test_perc=test_perc,
                                              val_perc=val_perc,
                                              batch_size=batch_size)
+
     model = net.KeystrokeLSTM(embedding_dim,
                               time_dim,
                               hidden_dim,
                               lstm_layers)
 
     trainer = pl.Trainer(max_epochs=epochs,
-                         gpus=1,
+                         accelerator='gpu',
+                         devices=1,
                          logger=logger,
                          callbacks=[checkpoint])
 
