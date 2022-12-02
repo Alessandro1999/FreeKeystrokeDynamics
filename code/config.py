@@ -5,28 +5,25 @@ import sys
 # define the path of the root folder indipendently from where the code is executed
 ROOT_PATH: Path = Path(__file__).parent.parent
 
+# the columns of our dataframes
+column_names = ['PARTICIPANT_ID','TEST_SECTION_ID','SENTENCE','USER_INPUT','TIMINGS']
+
 # append the folder to the path
 sys.path.append(str(ROOT_PATH))
-
-# unknown subject
-UNK_SUB = "<UNK>"
 
 # unknown key
 UNK_KEY = "<unk>"
 # pad key
 PAD_KEY = "<pad>"
 
-# mapping from a key to a one-hot value
-key_map: Dict[str, int] = dict()
-
-# mapping from a subject name to a one-hot value
-subject_map: Dict[str, int] = dict()
-
-# non-unknown subject
-known_subject: Set[str] = {"Alessandro", "Palo", "Iolanda", "Paglialunga",
-                           "Helena", "Leonardo", "Bianca", "Roberto", "RobertoM", "Umberto", "AlessandroPecchini"}
-#known_subject: Set[str] = {"Alessandro", "Palo", "Iolanda", "Helena"}
-
-
 # the seed for random stuff
 seed: int = 17
+
+# mapping from javascript keycodes to the respective key
+js_code_to_key : Dict[int,str] = dict()
+
+# inverse mapping
+js_key_to_code : Dict[str,int] = dict()
+
+# this set will contain all the characters used in typing (for the training set)
+chars : Set[str] = set()
